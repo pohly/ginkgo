@@ -1,6 +1,6 @@
 ---
 name: ci
-description: Configure Ginkgo for continuous integration — the recommended CLI flag set and the rationale for each flag (-r -p --randomize-all --randomize-suites --fail-on-pending --fail-on-empty --keep-going --cover --race --trace --json-report --timeout --poll-progress-after/-interval), invoking via go run to pin the CLI to go.mod, the exit-code safeguards that catch committed Focus/Pending and empty filters, collecting report and coverage artifacts with --output-dir, and CI-friendly output (--github-output/--force-newlines/--no-color). Use when setting up or hardening a CI pipeline for a Ginkgo suite.
+description: Configure Ginkgo for continuous integration — the recommended CLI flag set and the rationale for each flag (-r -p --randomize-all --randomize-suites --fail-on-pending --fail-on-empty --keep-going --cover --race --trace --json-report --timeout --poll-progress-after/-interval), invoking via go run to pin the CLI to go.mod, the exit-code safeguards that catch committed Focus/Pending and empty filters, collecting report and coverage artifacts with --output-dir, CI-friendly output (--github-output/--force-newlines/--no-color), and the fixed per-suite cost --race adds (GORACE=atexit_sleep_ms=0). Use when setting up or hardening a CI pipeline for a Ginkgo suite.
 ---
 
 # Ginkgo in CI
@@ -29,7 +29,7 @@ go run github.com/onsi/ginkgo/v2/ginkgo \
 | `--fail-on-empty` | fail if no specs ran (usually a malformed filter) |
 | `--keep-going` | don't stop at the first failed suite — collect all failures |
 | `--cover --coverprofile=cover.profile` | compute coverage into one merged profile (→ `ginkgo:reporting`) |
-| `--race` | run with the race detector |
+| `--race` | run with the race detector (costs a fixed ~1s per suite — see below) |
 | `--trace` | full stack traces on failure (worth it without a local feedback loop) |
 | `--json-report=report.json` | structured results for diagnosis and downstream tools (→ `ginkgo:debugging-failures`) |
 | `--timeout=TIMEOUT` | cap the whole run (default 1h — often not enough) |
@@ -56,6 +56,20 @@ Point reports and profiles at one directory and upload it as a build artifact:
 - **`--github-output`** — formats the console log for GitHub Actions readability (grouped, annotated).
 - **`--force-newlines`** — flush output line-by-line for CI systems that only flush on newline.
 - **`--no-color`** (or `GINKGO_NO_COLOR=TRUE`) — drop ANSI codes from logs that don't render them.
+
+## The race detector's fixed per-suite cost
+
+`--race` adds about a second to **every** suite, no matter how few specs it has. ThreadSanitizer sleeps for one second at process exit (`atexit_sleep_ms`, its default) so that races reported by goroutines still running at exit aren't lost, and Ginkgo has to wait for the processes it spawned. Under `-r -p` that lands in the gap *between* suites, where it looks exactly like compilation.
+
+**The tell is that it's flat across package size** — a 2-spec package pays the same as a 2000-spec package. A build cost can't behave that way; a per-process cost must. If you're auditing a slow race-enabled run, measure with precompiled binaries (`ginkgo build -r`) so compilation is excluded by construction rather than by inference.
+
+Remove it by zeroing the sleep:
+
+```bash
+GORACE=atexit_sleep_ms=0 go run github.com/onsi/ginkgo/v2/ginkgo -r -p --race ...
+```
+
+This slightly weakens detection at the very *end* of a suite — a reasonable trade for a suite whose races are found by its specs rather than at teardown, but not one to make blindly. Write the reason at the call site.
 
 ## Flakes and timeouts in CI
 

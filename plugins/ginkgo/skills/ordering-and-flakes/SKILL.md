@@ -9,7 +9,7 @@ Two topics that share a root cause: specs that aren't truly independent (`ginkgo
 
 ## Serial: opt out of parallelism
 
-`Serial` (container or subject) guarantees a spec never runs in parallel with anything else. Under the hood Ginkgo runs serial specs **last, on process #1**, after all other processes have exited. Reach for it sparingly.  OK for benchmarks, resource hogs, or specs that put an external resource into a known-bad state - but not OK as a band-aid for order-dependence or poorly isolated code/specs.
+`Serial` (container or subject) guarantees a spec never runs in parallel with anything else. Under the hood Ginkgo runs serial specs **last, on process #1**, after every other process has finished its suite. Reach for it sparingly.  OK for benchmarks, resource hogs, or specs that put an external resource into a known-bad state - but not OK as a band-aid for order-dependence or poorly isolated code/specs.
 
 ```go
 Describe("Something expensive", Serial, func() {

@@ -15,6 +15,12 @@ import (
 	"github.com/onsi/ginkgo/v2/types"
 )
 
+func endReportForProc(proc int) types.Report {
+	report := types.Report{}
+	report.SuiteConfig.ParallelProcess = proc
+	return report
+}
+
 type ColorableStringerStruct struct {
 	Label string
 	Count int
@@ -362,6 +368,20 @@ var _ = Describe("The Parallel Support Client & Server", func() {
 						close(proc3Exited)
 						Eventually(done).Should(BeClosed())
 					})
+
+					It("does not wait for procs that have reported the end of their suite to exit", func() {
+						done := make(chan any)
+						go func() {
+							defer GinkgoRecover()
+							Ω(client.BlockUntilNonprimaryProcsHaveFinished()).Should(Succeed())
+							close(done)
+						}()
+						Consistently(done).ShouldNot(BeClosed())
+						Ω(client.PostSuiteDidEnd(endReportForProc(2))).Should(Succeed())
+						Consistently(done).ShouldNot(BeClosed())
+						Ω(client.PostSuiteDidEnd(endReportForProc(3))).Should(Succeed())
+						Eventually(done).Should(BeClosed())
+					})
 				})
 
 				Describe("BlockUntilAggregatedNonprimaryProcsReport", func() {
@@ -392,6 +412,27 @@ var _ = Describe("The Parallel Support Client & Server", func() {
 
 						Ω(client.PostSuiteDidEnd(endReport3)).Should(Succeed())
 						close(proc3Exited)
+						Eventually(done).Should(BeClosed())
+					})
+
+					It("does not wait for procs that have reported back to exit", func() {
+						endReport2.SuiteConfig.ParallelProcess = 2
+						endReport3.SuiteConfig.ParallelProcess = 3
+
+						done := make(chan any)
+						go func() {
+							defer GinkgoRecover()
+							report, err := client.BlockUntilAggregatedNonprimaryProcsReport()
+							Ω(err).ShouldNot(HaveOccurred())
+							Ω(report.SpecReports).Should(ConsistOf(specReportA, specReportB))
+							close(done)
+						}()
+						Consistently(done).ShouldNot(BeClosed())
+
+						Ω(client.PostSuiteDidEnd(endReport2)).Should(Succeed())
+						Consistently(done).ShouldNot(BeClosed())
+
+						Ω(client.PostSuiteDidEnd(endReport3)).Should(Succeed())
 						Eventually(done).Should(BeClosed())
 					})
 

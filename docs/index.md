@@ -4132,6 +4132,14 @@ Ginkgo supports `--race` to analyze race conditions, `--cover` to compute code c
 
 `ginkgo -race` runs the race detector and emits any detected race conditions as the suite runs.  If any are detected the suite is marked as failed.
 
+Be aware that the race detector adds a fixed cost to _every_ test process, not just to your specs.  ThreadSanitizer sleeps for one second at process exit (its `atexit_sleep_ms` default) so that races reported by goroutines still running at exit are not lost.  As a result each suite spends about a second of wall clock beyond its specs, and a run of many small packages can spend more time in this teardown than in tests.  The tell is that the cost is flat across package size - a two-spec package pays exactly what a two-thousand-spec package pays - which is why it is easy to mistake for compilation time.  You can remove it with:
+
+```bash
+GORACE=atexit_sleep_ms=0 ginkgo -r -p --race
+```
+
+Zeroing the sleep slightly weakens detection at the very end of a suite.  That's usually a reasonable trade for a suite whose races are found by its specs rather than at teardown - but it isn't a trade to make blindly.
+
 `ginkgo -vet=comma,separated,list` allows you to configure the set of checks that are applied when your code is compiled.  If you pass in an empty list with `ginkgo --vet=""`,  `ginkgo` defaults to the set of default checks that `go test` uses.  The set of available checks can be found by running `go doc cmd/vet`.
 
 #### Computing Coverage
@@ -4185,7 +4193,7 @@ Here's why:
 - `--fail-on-empty` will fail the suite if it contains no specs or if all specs have been filtered out.  This can help you ensure that the CLI filters have not filtered out all specs (which typically means the filters are malformed).
 - `--keep-going` will instruct Ginkgo to keep running suites, even after a suite fails.  This can help you get a set of all failures instead of stopping after the first failed suite.
 - `--cover` and `--coverprofile=cover.profile` will compute coverage scores and generate a single coverage file for all your specs.
-- `--race` will run the race detector.
+- `--race` will run the race detector.  See [Profiling your Suites](#profiling-your-suites) for a note on the fixed per-suite cost the race detector adds, and how to remove it with `GORACE=atexit_sleep_ms=0`.
 - `--trace` will instruct Ginkgo to generate a stack trace for all failures (instead of simply including the location where the failure occurred).  This isn't usually necessary but can be helpful in CI environments where you may not have access to a fast feedback loop to iterate on and debug code.
 - `--json-report=report.json` will generate a JSON formatted report file.  You can store these off and use them later to get structured access to the suite and spec results.  Alternatively (or in addition) you can use `--junit-report=report.xml` to generate JUnit-formatted reports; these are compatible with several existing CI systems.
 - `--timeout` allows you to specify a timeout for the `ginkgo` run.  The default duration is one hour, which may or may not be enough!

@@ -1,6 +1,6 @@
 ---
 name: parallelism
-description: Run Ginkgo suites in parallel — ginkgo -p / --procs, the separate-process (not goroutine) model, SynchronizedBeforeSuite/SynchronizedAfterSuite vs BeforeSuite, GinkgoParallelProcess() for sharding ports/tmpdirs/databases, building a binary once via gexec, and piping child-process output to GinkgoWriter. Use when parallelizing a suite, speeding up integration tests, fixing parallel-only flakes/races, sharding external resources, or choosing between BeforeSuite and SynchronizedBeforeSuite.
+description: Run Ginkgo suites in parallel — ginkgo -p / --procs, the separate-process (not goroutine) model, SynchronizedBeforeSuite/SynchronizedAfterSuite vs BeforeSuite, GinkgoParallelProcess() for sharding ports/tmpdirs/databases, building a binary once via gexec, piping child-process output to GinkgoWriter, and what N processes actually cost (compilation vs teardown, and the fixed ~1s --race adds per suite — GORACE=atexit_sleep_ms=0). Use when parallelizing a suite, speeding up integration tests, auditing why a parallel run is slow, fixing parallel-only flakes/races, sharding external resources, or choosing between BeforeSuite and SynchronizedBeforeSuite.
 ---
 
 # Running Ginkgo in parallel
@@ -24,6 +24,22 @@ This is the one thing to internalize. Ginkgo compiles the suite once (`go test -
 - **Separate processes means separate memory.** Each process has its own copy of every package-level var and closure variable. There is **no shared memory**, so shared-closure specs like `var book` don't race across processes — they each get their own `book`. (Within a process specs still run one at a time.)
 - The flip side: **a `BeforeSuite` runs on every process**, so anything it creates is created N times.
 - You usually don't care which process runs a spec — except for the integration patterns below, which deliberately shard shared external resources by process index.
+
+## What the N processes cost
+
+Going parallel is cheap, but not free — and the cost is rarely where people look for it.
+
+- **Compilation is once per *suite*, not once per process.** Ginkgo builds the test binary a single time and runs N copies of it; under `-r` the CLI also overlaps compiling the next suite with running the current one. It is usually not the bottleneck it's assumed to be.
+- **Teardown is once per process — but they overlap**, so a suite pays roughly *one* process teardown, not N.
+- **Under `--race` that one teardown is ~1s.** ThreadSanitizer sleeps for a second at process exit (`atexit_sleep_ms`, its default) so races reported by goroutines still running at exit aren't lost. Every process pays it however trivial the suite: a 2-spec package pays exactly what a 2000-spec package pays.
+
+**That flatness is the tell.** The sleep lands in the gap *between* suites under `-r`, where it looks exactly like compilation — but a build cost can't be flat across package size, and a per-process cost must be. If you're auditing a slow `-p --race` run, precompile with `ginkgo build -r` so compilation is excluded by construction rather than by inference. To remove the sleep:
+
+```bash
+GORACE=atexit_sleep_ms=0 ginkgo -r -p --race
+```
+
+This slightly weakens detection at the very *end* of a suite — a reasonable trade when your races are found by your specs rather than at teardown, but a deliberate one; write the reason down where you set it. → `ginkgo:ci` for the whole CI flag set.
 
 ## Suite setup when N copies is wrong: Synchronized*Suite
 
@@ -52,7 +68,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 | all processes | runs (N independent resources) | second func runs with that `[]byte` |
 | use for | per-process resources | one shared resource, info fanned out |
 
-`SynchronizedAfterSuite(allProcesses, process1)` mirrors it: the first func runs on every process as it finishes; the second runs **only on process #1, after all others have exited**. The `[]byte` return is optional — a `func()`/`func()` form exists too.
+`SynchronizedAfterSuite(allProcesses, process1)` mirrors it: the first func runs on every process as it finishes; the second runs **only on process #1, after every other process has finished its suite** (Ginkgo waits for them to report back, not for their processes to exit). The `[]byte` return is optional — a `func()`/`func()` form exists too.
 
 ## Sharding shared resources by process index
 
